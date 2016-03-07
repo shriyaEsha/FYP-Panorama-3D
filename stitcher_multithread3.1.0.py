@@ -23,19 +23,17 @@ def extract_features(image1,image2, surfThreshold=1000, algorithm='SURF'):
   detector = cv2.xfeatures2d.SURF_create()
   (keypoints1,descriptors1) = detector.detectAndCompute(image_gs1,None)
   (keypoints2,descriptors2) = detector.detectAndCompute(image_gs2,None)
-  
+  #return keypoints as numpy arrays
+  keypoints1,keypoints2 = np.float32([kp.pt for kp in keypoints1]), np.float32([kp.pt for kp in keypoints2])
   return (keypoints1, descriptors1,keypoints2, descriptors2)
 
 
 # Find corresponding features between the images
 def find_correspondences(keypoints1, descriptors1, keypoints2, descriptors2):
-
   # Find corresponding features.
-  match = match_flann(descriptors1, descriptors2)
-  
-  points1 = np.array([keypoints1[i].pt for (i, j) in match], np.float32)
-  points2 = np.array([keypoints2[j].pt for (i, j) in match], np.float32)
-  
+  matches = match_flann(descriptors1, descriptors2)
+  points1 = np.float32([keypoints1[i] for (_, i) in matches])
+  points2 = np.float32([keypoints2[i] for (i, _) in matches])
   return (points1, points2)
 
 
@@ -106,7 +104,7 @@ def merge_images(image1, image2, homography, size, offset, keypoints):
   cv2.warpPerspective(image2, homography, size, panorama)
   
   panorama[oy:h1+oy, ox:ox+w1] = image1
-  #crop panorama -- remove this for vertical images like 'yosemite' test set
+  #crop panorama -- remove this for vertical images like 'door' test set
   height, width = panorama.shape[:2]
   crop_h = int(0.05 * height)
   crop_w = int(0.015 * width)
@@ -118,50 +116,18 @@ def merge_images(image1, image2, homography, size, offset, keypoints):
   return panorama
 
 
-def match_flann(des1, des2, r_threshold = 0.12):
-  FLANN_INDEX_KDTREE = 0
-  index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-  search_params = dict(checks=50)   # or pass empty dictionary
-
-  flann = cv2.FlannBasedMatcher(index_params,search_params)
-
-  matches = flann.knnMatch(des1,des2,k=2) #returns 2 closest matches
-  good = []
-  for m,n in matches:
-    if m.distance < 0.75 * n.distance:
-      good.append([m])
-
-  matchesMask = [[0,0] for i in xrange(len(matches))]
-  print 'good matches '
-  raw_input()
-  print good
-  raw_input()
-# ratio test as per Lowe's paper
-  for i,(m,n) in enumerate(matches):
-      if m.distance < 0.7*n.distance:
-          matchesMask[i]=[1,0] #take first descriptor
-
-  draw_params = dict(matchColor = (0,255,0),
-                     singlePointColor = (255,0,0),
-                     matchesMask = matchesMask,
-                     flags = 0)
-
-  # img3 = cv2.drawMatchesKnn(img1,kp1,img2,kp2,good,None)
-
-  # plt.imshow(img3,),plt.show()
-  #write kp and match indexes to files
-  m = []
-  idx1 = np.arange(len(des1))
-  idx2 = []
-  for a in good:
-    if a[0].trainIdx > min(len(des1)-1,len(des2)-1):
-      print 'stoppp ',a[0].trainIdx
-    else:
-      idx2.append(a[0].trainIdx)
-  print idx2
-  raw_input()
-  m = np.int32(zip(idx1,idx2))
-  return m
+def match_flann(des1, des2,ratio=0.75):
+    matcher = cv2.DescriptorMatcher_create("BruteForce")
+    rawMatches = matcher.knnMatch(des1, des2, 2)
+    matches = []
+ 
+    # loop over the raw matches
+    for m in rawMatches:
+      # ensure the distance is within a certain ratio of each
+      # other (i.e. Lowe's ratio test)
+      if len(m) == 2 and m[0].distance < m[1].distance * ratio:
+        matches.append((m[0].trainIdx, m[0].queryIdx))
+    return matches
 
   
 def draw_correspondences(image1, image2, points1, points2):
@@ -207,12 +173,12 @@ def pano(images,i):
   
   # Visualise corresponding features.
   correspondences = draw_correspondences(image1, image2, points1, points2)
-  cv2.imwrite("yosemite/correspondences.jpg", correspondences)
+  cv2.imwrite("door/correspondences.jpg", correspondences)
   print 'Wrote correspondences.jpg'
   
   try:
   # Find homography between the views.
-    (homography, _) = cv2.findHomography(points2, points1)
+    (homography, _) = cv2.findHomography(points2,points1,cv2.RANSAC,4)
   except Exception:
     print 'Not enough matches!'
     return -1
@@ -222,17 +188,17 @@ def pano(images,i):
   # Finally combine images into a panorama.
   images[i] = merge_images(image1, image2, homography, size, offset, (points1, points2))
   if(len(images) == 2):#final panorama
-    filename = "yosemite/pano_ multi_final"+str(i)+".jpg"
+    filename = "door/pano_ multi_final"+str(i)+".jpg"
     print 'pano size: ',images[0].shape[:2]
   else:
-    filename = "yosemite/pano_multi"+str(i)+".jpg"
+    filename = "door/pano_multi"+str(i)+".jpg"
   cv2.imwrite(filename,images[i])
   
 if __name__ == "__main__":
   import time
   st = time.time()
-  images = ["yosemite/yosemite1.jpg","yosemite/yosemite2.jpg","yosemite/yosemite3.jpg","yosemite/yosemite4.jpg"]
-  # images = ["yosemite/yosemite1.jpg","yosemite/yosemite2.jpg","yosemite/yosemite3.jpg","yosemite/yosemite4.jpg"]
+  images = ["door/door1.jpg","door/door2.jpg","door/door3.jpg","door/door4.jpg","door/door5.jpg","door/door6.jpg","door/door7.jpg"]
+  # images = ["door/door1.jpg","door/door2.jpg","door/door3.jpg","door/door4.jpg"]
   #images = ["bridge/01.jpg","bridge/02.jpg","bridge/03.jpg","bridge/04.jpg","bridge/05.jpg","bridge/06.jpg","bridge/07.jpg","bridge/08.jpg"]
   n = len(images)
   val = int(math.ceil(math.log(len(images),2)))+1
